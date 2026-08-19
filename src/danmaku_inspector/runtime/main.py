@@ -9,10 +9,13 @@ from PySide6.QtGui import QGuiApplication
 from PySide6.QtQml import QQmlApplicationEngine
 
 from danmaku_inspector.ui.backend import Backend
+from danmaku_inspector.runtime.log_utils import init_app_logging
 
 
 def main() -> None:
     """启动应用。"""
+    init_app_logging()
+
     app = QGuiApplication(sys.argv)
     engine = QQmlApplicationEngine()
 

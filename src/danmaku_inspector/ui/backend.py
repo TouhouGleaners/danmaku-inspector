@@ -5,10 +5,11 @@
 import logging
 import threading
 from typing import Any
+from pathlib import Path
 
 from PySide6.QtCore import QObject, Slot, Signal, Property, QAbstractListModel, QModelIndex, Qt
 
-from danmaku_inspector.types.models import DanmakuFingerprint, PartReport, PartStatus, SenderAnomaly
+from danmaku_inspector.types.models import PartReport, PartStatus, SenderAnomaly
 from danmaku_inspector.service.orchestrator import InspectionOrchestrator
 from danmaku_inspector.service.exporter import ExportService
 
