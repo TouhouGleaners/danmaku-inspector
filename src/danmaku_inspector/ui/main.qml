@@ -1,6 +1,6 @@
-import QtQuick 2.15
-import QtQuick.Controls 2.15
-import QtQuick.Layouts 1.15
+import QtQuick
+import QtQuick.Controls
+import QtQuick.Layouts
 
 ApplicationWindow {
     id: root
@@ -11,6 +11,14 @@ ApplicationWindow {
     minimumHeight: 500
     title: "弹幕校验工具"
     color: "#f0f2f5"
+
+    // 角色常量（与 ResultModel 角色定义一致）
+    readonly property int roleOnlineCount: 260
+    readonly property int roleExpectedCount: 261
+    readonly property int roleExtraCount: 262
+    readonly property int roleMismatchCount: 263
+    readonly property int roleUnsentCount: 264
+    readonly property int roleUnsentRate: 265
 
     property var selectedPart: null
 
@@ -44,7 +52,7 @@ ApplicationWindow {
                 text: "导出漏发"
                 flat: true
                 enabled: resultView.count > 0 && !backend.isRunning
-                onClicked: backend.export_diff(xmlDirInput.text + "/export", 0.1)
+                onClicked: backend.export_diff(xmlDirInput.text + "/export")
             }
         }
 
@@ -462,7 +470,7 @@ ApplicationWindow {
             RowLayout {
                 Layout.fillWidth: true
                 Text {
-                    text: selectedPart !== null ? "P" + (selectedPart + 1) + " 详情" : ""
+                    text: selectedPart !== null ? backend.resultModel.data(backend.resultModel.index(selectedPart, 0), 257) + " 详情" : ""
                     font.pixelSize: 16
                     font.bold: true
                     color: "#1a1a1a"
@@ -486,11 +494,11 @@ ApplicationWindow {
 
                 Repeater {
                     model: [
-                        { label: "线上弹幕", value: selectedPart !== null ? backend.resultModel.data(backend.resultModel.index(selectedPart, 0), 260) : "0", color: "#333" },
-                        { label: "应发弹幕", value: selectedPart !== null ? backend.resultModel.data(backend.resultModel.index(selectedPart, 0), 261) : "0", color: "#333" },
-                        { label: "漏发数量", value: selectedPart !== null ? backend.resultModel.data(backend.resultModel.index(selectedPart, 0), 263) : "0", color: "#e65100" },
-                        { label: "漏发比例", value: selectedPart !== null ? backend.resultModel.data(backend.resultModel.index(selectedPart, 0), 264) : "0%", color: "#e65100" },
-                        { label: "错发数量", value: selectedPart !== null ? backend.resultModel.data(backend.resultModel.index(selectedPart, 0), 265) : "0", color: "#c62828" },
+                        { label: "线上弹幕", value: selectedPart !== null ? backend.resultModel.data(backend.resultModel.index(selectedPart, 0), roleOnlineCount) : "0", color: "#333" },
+                        { label: "应发弹幕", value: selectedPart !== null ? backend.resultModel.data(backend.resultModel.index(selectedPart, 0), roleExpectedCount) : "0", color: "#333" },
+                        { label: "漏发数量", value: selectedPart !== null ? backend.resultModel.data(backend.resultModel.index(selectedPart, 0), roleUnsentCount) : "0", color: "#e65100" },
+                        { label: "漏发比例", value: selectedPart !== null ? backend.resultModel.data(backend.resultModel.index(selectedPart, 0), roleUnsentRate) : "0%", color: "#e65100" },
+                        { label: "错发数量", value: selectedPart !== null ? backend.resultModel.data(backend.resultModel.index(selectedPart, 0), roleMismatchCount) : "0", color: "#c62828" },
                     ]
 
                     Rectangle {

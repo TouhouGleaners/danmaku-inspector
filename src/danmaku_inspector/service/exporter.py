@@ -41,6 +41,15 @@ class ExportService:
         self._output_dir = Path(output_dir)
         self._output_dir.mkdir(parents=True, exist_ok=True)
 
+    def set_output_dir(self, output_dir: str) -> None:
+        """切换输出目录。
+
+        Args:
+            output_dir: 新的输出目录。
+        """
+        self._output_dir = Path(output_dir)
+        self._output_dir.mkdir(parents=True, exist_ok=True)
+
     def export_report_csv(self) -> Path:
         """导出全部分P的报告 CSV。
 

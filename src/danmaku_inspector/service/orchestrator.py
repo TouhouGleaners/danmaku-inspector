@@ -6,8 +6,9 @@ import logging
 from collections import Counter
 from datetime import datetime
 from pathlib import Path
+from typing import Callable
 
-from danmaku_inspector.types.models import DanmakuFingerprint, PartReport, InspectionReport
+from danmaku_inspector.types.models import DanmakuFingerprint, InspectionReport
 from danmaku_inspector.config.settings import InspectionConfig, NetworkConfig, DEFAULT_INSPECTION_CONFIG, DEFAULT_NETWORK_CONFIG
 from danmaku_inspector.repo.local.parser import parse_all_parts
 from danmaku_inspector.repo.bilibili.fetcher import get_video_info, fetch_part
@@ -44,7 +45,7 @@ class InspectionOrchestrator:
         bvid: str,
         cookie: str,
         xml_dir: str,
-        on_status: callable = None,
+        on_status: Callable[[str], None] | None = None,
     ) -> InspectionReport:
         """执行校验流程。
 

@@ -9,7 +9,7 @@ from pathlib import Path
 
 from PySide6.QtCore import QObject, Slot, Signal, Property, QAbstractListModel, QModelIndex, Qt
 
-from danmaku_inspector.types.models import PartReport, PartStatus, SenderAnomaly
+from danmaku_inspector.types.models import PartReport, PartStatus, SenderAnomaly, InspectionReport
 from danmaku_inspector.service.orchestrator import InspectionOrchestrator
 from danmaku_inspector.service.exporter import ExportService
 
@@ -247,10 +247,10 @@ class Backend(QObject):
     """
 
     # 信号
-    isRunningChanged = Signal()
-    statusChanged = Signal()
+    isRunningChanged = Signal(bool)
+    statusChanged = Signal(str)
     errorOccurred = Signal(str)
-    _updateResults = Signal()
+    _inspectFinished = Signal(object)  # 用于子线程回调主线程
 
     def __init__(self, parent: QObject | None = None) -> None:
         """初始化 Backend。
@@ -266,7 +266,7 @@ class Backend(QObject):
         self._orchestrator: InspectionOrchestrator | None = None
         self._exporter: ExportService | None = None
         self._xml_dir: str = ""
-        self._updateResults.connect(self._do_update_results)
+        self._inspectFinished.connect(self._on_inspect_finished)
 
     @Property(bool, notify=isRunningChanged)
     def isRunning(self) -> bool:
@@ -317,6 +317,8 @@ class Backend(QObject):
             return
 
         self._xml_dir = xml_dir
+        self._is_running = True
+        self.isRunningChanged.emit(True)
         logger.info(f"开始检测: bvid={bvid}, xml_dir={xml_dir}")
         thread = threading.Thread(target=self._run_inspect, args=(bvid, cookie, xml_dir))
         thread.daemon = True
@@ -331,16 +333,13 @@ class Backend(QObject):
             cookie: Cookie 字符串。
             xml_dir: 本地 XML 文件目录。
         """
-        self._is_running = True
-        self.isRunningChanged.emit()
-
         try:
             self._orchestrator = InspectionOrchestrator()
             report = self._orchestrator.run(
                 bvid=bvid,
                 cookie=cookie,
                 xml_dir=xml_dir,
-                on_status=self._update_status,
+                on_status=lambda s: self.statusChanged.emit(s),
             )
 
             # 初始化导出服务
@@ -351,47 +350,35 @@ class Backend(QObject):
                 output_dir=str(Path(xml_dir) / "export"),
             )
 
-            # 更新模型
-            self._result_model.set_results(report.reports)
-            for r in report.reports:
-                if r.anomalies:
-                    self._anomaly_model.set_anomalies(r.anomalies)
-                    break
-
-            self._status = f"完成，共 {report.total_parts} 个分P"
-            self.statusChanged.emit()
+            # 通过信号回传结果
+            self._inspectFinished.emit(report)
 
         except RuntimeError as e:
             if "风控" in str(e):
-                self._status = f"被B站风控了: {e}"
+                self.statusChanged.emit(f"被B站风控了: {e}")
             else:
-                self._status = f"错误: {e}"
-            self.statusChanged.emit()
+                self.statusChanged.emit(f"错误: {e}")
             self.errorOccurred.emit(str(e))
 
         except Exception as e:
             logger.error(f"校验失败: {e}")
-            self._status = f"错误: {e}"
-            self.statusChanged.emit()
+            self.statusChanged.emit(f"错误: {e}")
             self.errorOccurred.emit(str(e))
 
         finally:
             self._is_running = False
-            self.isRunningChanged.emit()
+            self.isRunningChanged.emit(False)
 
-    def _update_status(self, status: str) -> None:
-        """更新状态（线程安全）。
-
-        Args:
-            status: 状态文本。
-        """
-        self._status = status
-        self.statusChanged.emit()
-
-    @Slot()
-    def _do_update_results(self) -> None:
-        """在主线程里更新 model。"""
-        pass
+    @Slot(InspectionReport)
+    def _on_inspect_finished(self, report: InspectionReport) -> None:
+        """校验完成回调（主线程）。"""
+        self._result_model.set_results(report.reports)
+        for r in report.reports:
+            if r.anomalies:
+                self._anomaly_model.set_anomalies(r.anomalies)
+                break
+        self._status = f"完成，共 {report.total_parts} 个分P"
+        self.statusChanged.emit(self._status)
 
     @Slot(int)
     def show_part_detail(self, index: int) -> None:
@@ -415,7 +402,7 @@ class Backend(QObject):
             path = self._exporter.export_part_csv(part_index)
             if path:
                 self._status = f"已导出: {path.name}"
-                self.statusChanged.emit()
+                self.statusChanged.emit(self._status)
 
     @Slot(int)
     def export_part_diff(self, part_index: int) -> None:
@@ -428,7 +415,7 @@ class Backend(QObject):
             path = self._exporter.export_part_diff(part_index)
             if path:
                 self._status = f"已导出: {path.name}"
-                self.statusChanged.emit()
+                self.statusChanged.emit(self._status)
 
     @Slot(int)
     def export_part_danmaku_csv(self, part_index: int) -> None:
@@ -441,7 +428,7 @@ class Backend(QObject):
             path = self._exporter.export_part_danmaku_csv(part_index)
             if path:
                 self._status = f"已导出: {path.name}"
-                self.statusChanged.emit()
+                self.statusChanged.emit(self._status)
 
     @Slot(int)
     def export_part_danmaku_xml(self, part_index: int) -> None:
@@ -454,7 +441,7 @@ class Backend(QObject):
             path = self._exporter.export_part_danmaku_xml(part_index)
             if path:
                 self._status = f"已导出: {path.name}"
-                self.statusChanged.emit()
+                self.statusChanged.emit(self._status)
 
     @Slot()
     def export_csv(self) -> None:
@@ -462,23 +449,18 @@ class Backend(QObject):
         if self._exporter:
             path = self._exporter.export_report_csv()
             self._status = f"已导出: {path.name}"
-            self.statusChanged.emit()
+            self.statusChanged.emit(self._status)
 
-    @Slot(str, float)
-    def export_diff(self, output_dir: str, threshold: float) -> None:
+    @Slot(str)
+    def export_diff(self, output_dir: str) -> None:
         """批量导出漏发弹幕。
 
         Args:
             output_dir: 输出目录。
-            threshold: 漏发比例阈值 (0-1)。
         """
-        if self._orchestrator and self._orchestrator.report:
-            exporter = ExportService(
-                reports=self._orchestrator.report.reports,
-                all_expected=self._orchestrator.all_expected,
-                all_online=self._orchestrator.all_online,
-                output_dir=output_dir,
-            )
-            exported = exporter.export_diff_batch(threshold)
+        if self._exporter and self._orchestrator:
+            self._exporter.set_output_dir(output_dir)
+            threshold = self._orchestrator._inspection_config.unsent_rate_threshold
+            exported = self._exporter.export_diff_batch(threshold)
             self._status = f"导出完成，共 {len(exported)} 个文件"
-            self.statusChanged.emit()
+            self.statusChanged.emit(self._status)
