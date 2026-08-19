@@ -306,7 +306,6 @@ ApplicationWindow {
                                 selectedPart = index
                                 backend.show_part_detail(index)
                             }
-                            cursorShape: Qt.PointingHandCursor
                         }
 
                         RowLayout {
@@ -352,7 +351,6 @@ ApplicationWindow {
                                     Layout.preferredWidth: 50
                                     onClicked: backend.export_part_csv(index)
                                     hoverEnabled: true
-                                    cursorShape: Qt.PointingHandCursor
                                     background: Rectangle {
                                         radius: 4
                                         color: parent.down ? "#e0e0e0" : parent.hovered ? "#f5f5f5" : "#fff"
@@ -366,7 +364,6 @@ ApplicationWindow {
                                     Layout.preferredWidth: 50
                                     onClicked: backend.export_part_diff(index)
                                     hoverEnabled: true
-                                    cursorShape: Qt.PointingHandCursor
                                     background: Rectangle {
                                         radius: 4
                                         color: parent.down ? "#e0e0e0" : parent.hovered ? "#f5f5f5" : "#fff"
@@ -380,7 +377,6 @@ ApplicationWindow {
                                     Layout.preferredWidth: 60
                                     onClicked: backend.export_part_danmaku_csv(index)
                                     hoverEnabled: true
-                                    cursorShape: Qt.PointingHandCursor
                                     background: Rectangle {
                                         radius: 4
                                         color: parent.down ? "#e0e0e0" : parent.hovered ? "#f5f5f5" : "#fff"
@@ -394,7 +390,6 @@ ApplicationWindow {
                                     Layout.preferredWidth: 60
                                     onClicked: backend.export_part_danmaku_xml(index)
                                     hoverEnabled: true
-                                    cursorShape: Qt.PointingHandCursor
                                     background: Rectangle {
                                         radius: 4
                                         color: parent.down ? "#e0e0e0" : parent.hovered ? "#f5f5f5" : "#fff"

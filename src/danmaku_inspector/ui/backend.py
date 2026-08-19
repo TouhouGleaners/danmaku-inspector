@@ -336,7 +336,7 @@ class Backend(QObject):
 
         try:
             self._orchestrator = InspectionOrchestrator()
-            reports = self._orchestrator.run(
+            report = self._orchestrator.run(
                 bvid=bvid,
                 cookie=cookie,
                 xml_dir=xml_dir,
@@ -345,20 +345,20 @@ class Backend(QObject):
 
             # 初始化导出服务
             self._exporter = ExportService(
-                reports=reports,
+                reports=report.reports,
                 all_expected=self._orchestrator.all_expected,
                 all_online=self._orchestrator.all_online,
                 output_dir=str(Path(xml_dir) / "export"),
             )
 
             # 更新模型
-            self._result_model.set_results(reports)
-            for r in reports:
+            self._result_model.set_results(report.reports)
+            for r in report.reports:
                 if r.anomalies:
                     self._anomaly_model.set_anomalies(r.anomalies)
                     break
 
-            self._status = f"完成，共 {len(reports)} 个分P"
+            self._status = f"完成，共 {report.total_parts} 个分P"
             self.statusChanged.emit()
 
         except RuntimeError as e:
@@ -400,8 +400,8 @@ class Backend(QObject):
         Args:
             index: 分P索引。
         """
-        if self._orchestrator and 0 <= index < len(self._orchestrator.reports):
-            report = self._orchestrator.reports[index]
+        if self._orchestrator and self._orchestrator.report and 0 <= index < len(self._orchestrator.report.reports):
+            report = self._orchestrator.report.reports[index]
             self._anomaly_model.set_anomalies(report.anomalies)
 
     @Slot(int)
@@ -472,9 +472,9 @@ class Backend(QObject):
             output_dir: 输出目录。
             threshold: 漏发比例阈值 (0-1)。
         """
-        if self._orchestrator:
+        if self._orchestrator and self._orchestrator.report:
             exporter = ExportService(
-                reports=self._orchestrator.reports,
+                reports=self._orchestrator.report.reports,
                 all_expected=self._orchestrator.all_expected,
                 all_online=self._orchestrator.all_online,
                 output_dir=output_dir,

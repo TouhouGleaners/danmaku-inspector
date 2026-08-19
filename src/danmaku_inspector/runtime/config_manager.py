@@ -10,7 +10,7 @@ from pydantic import ValidationError, BaseModel
 from danmaku_inspector.config.app_meta import AppInfo
 from danmaku_inspector.config.settings import InspectionConfig, NetworkConfig
 
-logger = logging.getLogger("App.System.Config")
+logger = logging.getLogger(__name__)
 
 CONFIG_PATH = AppInfo.Paths.CONFIG
 

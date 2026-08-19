@@ -1,16 +1,9 @@
 """日志工具。
 
-提供统一的日志初始化和命名空间定义。
+提供统一的日志初始化。
 """
 import sys
 import logging
-
-
-class LogNamespace:
-    """日志命名空间契约。"""
-    SYSTEM = "App.System"
-    FETCHER = "App.Fetcher"
-    INSPECTOR = "App.Inspector"
 
 
 def init_app_logging(level: int = logging.DEBUG) -> None:
@@ -20,7 +13,7 @@ def init_app_logging(level: int = logging.DEBUG) -> None:
         level: 日志级别。
     """
     formatter = logging.Formatter(
-        '%(asctime)s [%(name)s] %(levelname)s - %(message)s',
+        '[%(asctime)s] [%(threadName)s/%(levelname)s] [%(name)s]: %(message)s',
         datefmt='%H:%M:%S'
     )
 

@@ -21,7 +21,7 @@ dependencies = [
 ]
 
 [project.scripts]
-dmi = "danmaku_inspector.runtime.main:main"
+dmi = "danmaku_inspector.main:main"
 
 [tool.setuptools.dynamic]
 version = {attr = "danmaku_inspector._version.__version__"}

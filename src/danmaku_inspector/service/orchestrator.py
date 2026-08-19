@@ -4,9 +4,10 @@
 """
 import logging
 from collections import Counter
+from datetime import datetime
 from pathlib import Path
 
-from danmaku_inspector.types.models import DanmakuFingerprint, PartReport
+from danmaku_inspector.types.models import DanmakuFingerprint, PartReport, InspectionReport
 from danmaku_inspector.config.settings import InspectionConfig, NetworkConfig, DEFAULT_INSPECTION_CONFIG, DEFAULT_NETWORK_CONFIG
 from danmaku_inspector.repo.local.parser import parse_all_parts
 from danmaku_inspector.repo.bilibili.fetcher import get_video_info, fetch_part
@@ -36,7 +37,7 @@ class InspectionOrchestrator:
         self._network_config = network_config
         self.all_expected: dict[int, Counter[DanmakuFingerprint]] = {}
         self.all_online: dict[int, tuple[Counter[DanmakuFingerprint], dict[str, Counter[DanmakuFingerprint]]]] = {}
-        self.reports: list[PartReport] = []
+        self.report: InspectionReport | None = None
 
     def run(
         self,
@@ -44,7 +45,7 @@ class InspectionOrchestrator:
         cookie: str,
         xml_dir: str,
         on_status: callable = None,
-    ) -> list[PartReport]:
+    ) -> InspectionReport:
         """执行校验流程。
 
         Args:
@@ -54,7 +55,7 @@ class InspectionOrchestrator:
             on_status: 状态回调函数，接收状态字符串。
 
         Returns:
-            各分P的检测报告列表。
+            整体检测报告。
 
         Raises:
             ValueError: 未找到 XML 文件或没有可校验的分P。
@@ -111,10 +112,19 @@ class InspectionOrchestrator:
         if on_status:
             on_status("正在分析...")
 
-        self.reports = inspect_all_parts(
+        reports = inspect_all_parts(
             all_expected=self.all_expected,
             all_online=self.all_online,
             config=self._inspection_config,
         )
 
-        return self.reports
+        # 6. 构建报告
+        self.report = InspectionReport(
+            bvid=bvid,
+            title=video_info["title"],
+            total_parts=len(reports),
+            reports=reports,
+            timestamp=datetime.now().isoformat(),
+        )
+
+        return self.report

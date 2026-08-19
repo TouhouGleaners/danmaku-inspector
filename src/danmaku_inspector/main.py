@@ -1,9 +1,6 @@
 """应用入口。"""
-import os
 import sys
 from pathlib import Path
-
-os.environ["QT_QUICK_CONTROLS_STYLE"] = "Basic"
 
 from PySide6.QtGui import QGuiApplication
 from PySide6.QtQml import QQmlApplicationEngine
@@ -24,7 +21,7 @@ def main() -> None:
     engine.rootContext().setContextProperty("backend", backend)
 
     # 加载 QML
-    qml_file = Path(__file__).parent.parent / "ui" / "main.qml"
+    qml_file = Path(__file__).parent / "ui" / "main.qml"
     engine.load(qml_file)
 
     if not engine.rootObjects():

@@ -14,7 +14,7 @@ from pydantic import BaseModel
 
 from danmaku_inspector.config.app_meta import AppInfo
 
-logger = logging.getLogger("App.System.Credential")
+logger = logging.getLogger(__name__)
 
 KEYRING_SERVICE_NAME = f"{AppInfo.NAME_EN}-CredentialsKey"
 KEYRING_USERNAME = "default_user"
