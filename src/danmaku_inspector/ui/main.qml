@@ -12,6 +12,13 @@ ApplicationWindow {
     title: "弹幕校验工具"
     color: "#f0f2f5"
 
+    onClosing: function(closeEvent) {
+        // 窗口关闭时保存 Cookie
+        if (backend && cookieInput.text) {
+            backend.save_cookie(cookieInput.text)
+        }
+    }
+
     // 角色常量（与 ResultModel 角色定义一致）
     readonly property int roleOnlineCount: 260
     readonly property int roleExpectedCount: 261
@@ -92,6 +99,7 @@ ApplicationWindow {
                     TextField {
                         id: cookieInput
                         placeholderText: "SESSDATA=xxx"
+                        text: backend.cookie
                         Layout.fillWidth: true
                         enabled: !backend.isRunning
                         background: Rectangle {

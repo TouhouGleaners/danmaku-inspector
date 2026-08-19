@@ -12,6 +12,8 @@ from PySide6.QtCore import QObject, Slot, Signal, Property, QAbstractListModel, 
 from danmaku_inspector.types.models import PartReport, PartStatus, SenderAnomaly, InspectionReport
 from danmaku_inspector.service.orchestrator import InspectionOrchestrator
 from danmaku_inspector.service.exporter import ExportService
+from danmaku_inspector.runtime.config_manager import ConfigManager
+from danmaku_inspector.runtime.credential_manager import CredentialManager, Credential
 
 logger = logging.getLogger(__name__)
 
@@ -266,6 +268,13 @@ class Backend(QObject):
         self._orchestrator: InspectionOrchestrator | None = None
         self._exporter: ExportService | None = None
         self._xml_dir: str = ""
+
+        # 持久化管理器
+        self._config_manager = ConfigManager()
+        self._credential_manager = CredentialManager()
+        self._app_config = self._config_manager.load()
+        self._credentials = self._credential_manager.load_credentials()
+
         self._inspectFinished.connect(self._on_inspect_finished)
 
     @Property(bool, notify=isRunningChanged)
@@ -304,6 +313,35 @@ class Backend(QObject):
         """
         return self._anomaly_model
 
+    @Property(str, notify=statusChanged)
+    def cookie(self) -> str:
+        """当前 Cookie（从凭据加载）。
+
+        Returns:
+            Cookie 字符串。
+        """
+        if self._credentials:
+            return self._credentials[0].cookie
+        return ""
+
+    @Slot(str)
+    def save_cookie(self, cookie: str) -> None:
+        """保存 Cookie 到加密存储。
+
+        Args:
+            cookie: Cookie 字符串。
+        """
+        if not cookie:
+            return
+
+        if self._credentials:
+            self._credentials[0].cookie = cookie
+        else:
+            self._credentials = [Credential(name="默认", cookie=cookie)]
+
+        self._credential_manager.save_credentials(self._credentials)
+        logger.info("Cookie 已保存。")
+
     @Slot(str, str, str)
     def start_inspect(self, bvid: str, cookie: str, xml_dir: str) -> None:
         """开始校验（在子线程中运行）。
@@ -315,6 +353,9 @@ class Backend(QObject):
         """
         if self._is_running:
             return
+
+        # 保存 Cookie
+        self.save_cookie(cookie)
 
         self._xml_dir = xml_dir
         self._is_running = True
@@ -334,7 +375,10 @@ class Backend(QObject):
             xml_dir: 本地 XML 文件目录。
         """
         try:
-            self._orchestrator = InspectionOrchestrator()
+            self._orchestrator = InspectionOrchestrator(
+                inspection_config=self._app_config.inspection,
+                network_config=self._app_config.network,
+            )
             report = self._orchestrator.run(
                 bvid=bvid,
                 cookie=cookie,

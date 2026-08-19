@@ -16,8 +16,9 @@ def main() -> None:
     app = QGuiApplication(sys.argv)
     engine = QQmlApplicationEngine()
 
-    # 注册后端对象
+    # 注册后端对象（保持引用，防止被 GC）
     backend = Backend()
+    app.setProperty("backend", backend)  # 绑定到 app 生命周期
     engine.rootContext().setContextProperty("backend", backend)
 
     # 加载 QML
