@@ -9,19 +9,21 @@
 import logging
 from collections import Counter
 
-from .models import DanmakuFingerprint, PartReport, PartStatus, SenderAnomaly
+from danmaku_inspector.types.models import DanmakuFingerprint, PartReport, PartStatus, SenderAnomaly
+from danmaku_inspector.config.settings import InspectionConfig, DEFAULT_INSPECTION_CONFIG
 
 logger = logging.getLogger(__name__)
 
-# 默认阈值
-EXTRA_THRESHOLD = 15
-MATCH_THRESHOLD = 0.7
-UNSENT_RATE_THRESHOLD = 0.1  # 漏发率阈值 10%
-EXTRA_RATE_THRESHOLD = 0.05  # 错发率阈值 5%
-
 
 def counter_total(counter: Counter) -> int:
-    """计算 Counter 中所有元素的总数。"""
+    """计算 Counter 中所有元素的总数。
+
+    Args:
+        counter: 要计算的 Counter。
+
+    Returns:
+        所有元素的总数。
+    """
     return sum(counter.values())
 
 
@@ -31,21 +33,20 @@ def inspect_part(
     online: Counter[DanmakuFingerprint],
     sender_map: dict[str, Counter[DanmakuFingerprint]],
     all_expected: dict[int, Counter[DanmakuFingerprint]],
-    extra_threshold: int = EXTRA_THRESHOLD,
-    match_threshold: float = MATCH_THRESHOLD,
-    unsent_rate_threshold: float = UNSENT_RATE_THRESHOLD,
-    extra_rate_threshold: float = EXTRA_RATE_THRESHOLD,
+    config: InspectionConfig = DEFAULT_INSPECTION_CONFIG,
 ) -> PartReport:
     """校验单个分P（错发 + 漏发）。
 
     Args:
-        part_num: 当前分P编号
-        expected: 本地应发弹幕 Counter
-        online: 线上全量弹幕 Counter
-        sender_map: 发送者映射 {midhash: Counter}
-        all_expected: 所有分P的应发弹幕 {part_num: Counter}
-        extra_threshold: 多余弹幕判定阈值
-        match_threshold: 匹配率阈值
+        part_num: 当前分P编号。
+        expected: 本地应发弹幕 Counter。
+        online: 线上全量弹幕 Counter。
+        sender_map: 发送者映射 {midhash: Counter}。
+        all_expected: 所有分P的应发弹幕 {part_num: Counter}。
+        config: 校验阈值配置。
+
+    Returns:
+        单个分P的检测报告。
     """
     online_count = counter_total(online)
     expected_count = counter_total(expected)
@@ -59,9 +60,9 @@ def inspect_part(
     unsent_rate = unsent_count / expected_count if expected_count > 0 else 0.0
 
     # 多余弹幕数 < 阈值，认为是路人散兵，不归因
-    if extra_count < extra_threshold:
+    if extra_count < config.extra_threshold:
         # 漏发率在可接受范围内，显示正常
-        if unsent_rate < unsent_rate_threshold:
+        if unsent_rate < config.unsent_rate_threshold:
             status = PartStatus.PASS
         else:
             status = PartStatus.UNSENT
@@ -81,15 +82,15 @@ def inspect_part(
         extra=extra,
         all_expected=all_expected,
         current_part=part_num,
-        extra_threshold=extra_threshold,
-        match_threshold=match_threshold,
+        extra_threshold=config.extra_threshold,
+        match_threshold=config.match_threshold,
     )
 
     # 综合判定状态
     mismatch_count = sum(a.extra_count for a in anomalies)
     mismatch_rate = mismatch_count / online_count if online_count > 0 else 0.0
-    has_extra = mismatch_rate >= extra_rate_threshold
-    has_unsent = unsent_rate >= unsent_rate_threshold
+    has_extra = mismatch_rate >= config.extra_rate_threshold
+    has_unsent = unsent_rate >= config.unsent_rate_threshold
 
     if has_extra and has_unsent:
         status = PartStatus.BOTH
@@ -120,7 +121,19 @@ def _find_anomalies(
     extra_threshold: int,
     match_threshold: float,
 ) -> list[SenderAnomaly]:
-    """在 Extra 池中寻找异常发送者，尝试归因到其他分P。"""
+    """在 Extra 池中寻找异常发送者，尝试归因到其他分P。
+
+    Args:
+        sender_map: 发送者映射 {midhash: Counter}。
+        extra: 多余弹幕 Counter。
+        all_expected: 所有分P的应发弹幕。
+        current_part: 当前分P编号。
+        extra_threshold: 贡献条数阈值。
+        match_threshold: 匹配率阈值。
+
+    Returns:
+        异常发送者列表。
+    """
     anomalies = []
 
     for midhash, sender_counter in sender_map.items():
@@ -166,12 +179,18 @@ def _find_anomalies(
 def inspect_all_parts(
     all_expected: dict[int, Counter[DanmakuFingerprint]],
     all_online: dict[int, tuple[Counter[DanmakuFingerprint], dict[str, Counter[DanmakuFingerprint]]]],
-    extra_threshold: int = EXTRA_THRESHOLD,
-    match_threshold: float = MATCH_THRESHOLD,
-    unsent_rate_threshold: float = UNSENT_RATE_THRESHOLD,
-    extra_rate_threshold: float = EXTRA_RATE_THRESHOLD,
+    config: InspectionConfig = DEFAULT_INSPECTION_CONFIG,
 ) -> list[PartReport]:
-    """校验所有分P。"""
+    """校验所有分P。
+
+    Args:
+        all_expected: {part_num: expected_counter} 映射。
+        all_online: {part_num: (online_counter, sender_map)} 映射。
+        config: 校验阈值配置。
+
+    Returns:
+        所有分P的检测报告列表。
+    """
     reports = []
 
     for part_num in sorted(all_expected.keys()):
@@ -188,10 +207,7 @@ def inspect_all_parts(
             online=online,
             sender_map=sender_map,
             all_expected=all_expected,
-            extra_threshold=extra_threshold,
-            match_threshold=match_threshold,
-            unsent_rate_threshold=unsent_rate_threshold,
-            extra_rate_threshold=extra_rate_threshold,
+            config=config,
         )
         reports.append(report)
 

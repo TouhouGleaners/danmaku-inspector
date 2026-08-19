@@ -8,10 +8,11 @@ os.environ["QT_QUICK_CONTROLS_STYLE"] = "Basic"
 from PySide6.QtGui import QGuiApplication
 from PySide6.QtQml import QQmlApplicationEngine
 
-from .backend import Backend
+from danmaku_inspector.ui.backend import Backend
 
 
-def main():
+def main() -> None:
+    """启动应用。"""
     app = QGuiApplication(sys.argv)
     engine = QQmlApplicationEngine()
 
@@ -20,7 +21,7 @@ def main():
     engine.rootContext().setContextProperty("backend", backend)
 
     # 加载 QML
-    qml_file = Path(__file__).parent / "ui" / "main.qml"
+    qml_file = Path(__file__).parent.parent / "ui" / "main.qml"
     engine.load(qml_file)
 
     if not engine.rootObjects():

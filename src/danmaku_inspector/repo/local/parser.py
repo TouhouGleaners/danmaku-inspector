@@ -8,7 +8,7 @@ import xml.etree.ElementTree as ET
 from collections import Counter
 from pathlib import Path
 
-from .models import DanmakuFingerprint
+from danmaku_inspector.types.models import DanmakuFingerprint
 
 # 文件名匹配: P{num}_{desc}.xml 或 {num}.xml
 _FILENAME_PATTERN = re.compile(r"^(?:P)?(\d+)")
@@ -17,9 +17,11 @@ _FILENAME_PATTERN = re.compile(r"^(?:P)?(\d+)")
 def parse_xml(xml_path: Path) -> Counter[DanmakuFingerprint]:
     """解析单个 XML 文件，返回弹幕指纹 Counter。
 
-    XML 格式: <d p="progress,mode,fontsize,color,...">content</d>
+    Args:
+        xml_path: XML 文件路径。
 
-    其中 progress 是浮点数秒，需要转换为毫秒整数。
+    Returns:
+        弹幕指纹 Counter，key 为 DanmakuFingerprint，value 为出现次数。
     """
     tree = ET.parse(xml_path)
     root = tree.getroot()
@@ -61,7 +63,15 @@ def scan_xml_dir(xml_dir: Path) -> dict[int, Path]:
     """扫描目录，建立分P编号到文件路径的映射。
 
     支持格式: P01_第一集.xml / 01.xml
-    文件名不规范时抛出 ValueError。
+
+    Args:
+        xml_dir: 包含 XML 文件的目录。
+
+    Returns:
+        分P编号到文件路径的映射。
+
+    Raises:
+        ValueError: 文件名不符合规范或分P编号重复。
     """
     mapping: dict[int, Path] = {}
     errors: list[str] = []
@@ -88,7 +98,11 @@ def scan_xml_dir(xml_dir: Path) -> dict[int, Path]:
 def parse_all_parts(xml_dir: Path) -> dict[int, Counter[DanmakuFingerprint]]:
     """解析目录下所有分P的 XML 文件。
 
-    返回 { part_num: Counter } 映射，按分P编号排序。
+    Args:
+        xml_dir: 包含 XML 文件的目录。
+
+    Returns:
+        分P编号到弹幕指纹 Counter 的映射，按分P编号排序。
     """
     part_files = scan_xml_dir(xml_dir)
 
