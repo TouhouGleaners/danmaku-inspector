@@ -43,7 +43,7 @@ class InspectionOrchestrator:
     def run(
         self,
         bvid: str,
-        cookie: str,
+        sessdata: str,
         xml_dir: str,
         on_status: Callable[[str], None] | None = None,
     ) -> InspectionReport:
@@ -51,7 +51,7 @@ class InspectionOrchestrator:
 
         Args:
             bvid: 视频 BV 号。
-            cookie: Cookie 字符串。
+            sessdata: SESSDATA 值。
             xml_dir: 本地 XML 文件目录。
             on_status: 状态回调函数，接收状态字符串。
 
@@ -75,7 +75,7 @@ class InspectionOrchestrator:
         if on_status:
             on_status("正在获取视频信息...")
 
-        video_info = get_video_info(bvid, cookie)
+        video_info = get_video_info(bvid, sessdata)
 
         # 3. 构建 cid 映射
         part_cids: dict[int, int] = {}
@@ -99,7 +99,7 @@ class InspectionOrchestrator:
                 online_counter, sender_map = fetch_part(
                     cid=cid,
                     avid=video_info["aid"],
-                    cookie=cookie,
+                    sessdata=sessdata,
                     config=self._network_config,
                 )
                 self.all_online[part_num] = (online_counter, sender_map)

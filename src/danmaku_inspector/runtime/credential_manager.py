@@ -10,21 +10,15 @@ from pathlib import Path
 
 import keyring
 from cryptography.fernet import Fernet, InvalidToken
-from pydantic import BaseModel
 
 from danmaku_inspector.config.app_meta import AppInfo
+from danmaku_inspector.types.models import AccountCredential
 
 logger = logging.getLogger(__name__)
 
 KEYRING_SERVICE_NAME = f"{AppInfo.NAME_EN}-CredentialsKey"
 KEYRING_USERNAME = "default_user"
 ACCOUNTS_PATH = AppInfo.Paths.ACCOUNTS
-
-
-class Credential(BaseModel):
-    """已保存的凭据。"""
-    name: str = ""
-    cookie: str = ""
 
 
 class CredentialManager:
@@ -55,7 +49,7 @@ class CredentialManager:
             logger.warning(f"密钥环写入失败: {e}，密钥仅在本次会话有效，跳过凭据持久化。")
             return new_key, False
 
-    def load_credentials(self) -> list[Credential]:
+    def load_credentials(self) -> list[AccountCredential]:
         """从加密文件加载凭据列表。
 
         Returns:
@@ -81,7 +75,7 @@ class CredentialManager:
             credentials = []
             for i, item in enumerate(raw_list):
                 try:
-                    credentials.append(Credential.model_validate(item))
+                    credentials.append(AccountCredential.model_validate(item))
                 except Exception as e:
                     logger.warning(f"跳过格式异常的凭据条目 (index={i}): {e}")
 
@@ -101,7 +95,7 @@ class CredentialManager:
             logger.critical(f"加载凭据数据时发生意外错误: {e}", exc_info=True)
             raise
 
-    def save_credentials(self, credentials: list[Credential]) -> None:
+    def save_credentials(self, credentials: list[AccountCredential]) -> None:
         """将凭据列表加密后写入文件。
 
         Args:

@@ -6,6 +6,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import NamedTuple
 
+from pydantic import BaseModel, Field
+
 
 class DanmakuFingerprint(NamedTuple):
     """五元组物理指纹，用于唯一标识一条弹幕的物理特征。
@@ -97,3 +99,35 @@ class InspectionReport:
     total_parts: int
     reports: list[PartReport]
     timestamp: str
+
+
+def _mask(value: str) -> str:
+    """遮蔽凭据：保留前4后4，中间用 * 替代，总长不超过 20。"""
+    if len(value) <= 4:
+        return "*" * len(value)
+    if len(value) <= 8:
+        return f"{value[:2]}{'*' * (len(value) - 4)}{value[-2:]}"
+    stars = min(len(value) - 8, 8)
+    return f"{value[:4]}{'*' * stars}{value[-4:]}"
+
+
+class AccountCredential(BaseModel):
+    """已保存的账号凭据。
+
+    Attributes:
+        uid: 用户 UID。
+        name: 用户昵称。
+        sessdata: SESSDATA 值。
+        level: 用户等级 (-1=未知, 0-6)。
+        is_valid: 是否有效 (None=未检测, True=有效, False=失效)。
+    """
+    uid: int = 0
+    name: str = ""
+    sessdata: str = ""
+    level: int = -1
+    is_valid: bool | None = Field(default=None, exclude=True)
+
+    @property
+    def masked_sessdata(self) -> str:
+        """遮蔽后的 SESSDATA。"""
+        return _mask(self.sessdata)

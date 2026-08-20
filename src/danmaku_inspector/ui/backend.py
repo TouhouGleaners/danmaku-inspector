@@ -7,13 +7,23 @@ import threading
 from typing import Any
 from pathlib import Path
 
+
+def _mask(value: str) -> str:
+    """遮蔽凭据：保留前4后4，中间用 * 替代，总长不超过 20。"""
+    if len(value) <= 4:
+        return "*" * len(value)
+    if len(value) <= 8:
+        return f"{value[:2]}{'*' * (len(value) - 4)}{value[-2:]}"
+    stars = min(len(value) - 8, 8)
+    return f"{value[:4]}{'*' * stars}{value[-4:]}"
+
 from PySide6.QtCore import QObject, Slot, Signal, Property, QAbstractListModel, QModelIndex, Qt
 
-from danmaku_inspector.types.models import PartReport, PartStatus, SenderAnomaly, InspectionReport
+from danmaku_inspector.types.models import PartReport, PartStatus, SenderAnomaly, InspectionReport, AccountCredential
 from danmaku_inspector.service.orchestrator import InspectionOrchestrator
 from danmaku_inspector.service.exporter import ExportService
 from danmaku_inspector.runtime.config_manager import ConfigManager
-from danmaku_inspector.runtime.credential_manager import CredentialManager, Credential
+from danmaku_inspector.runtime.credential_manager import CredentialManager
 
 logger = logging.getLogger(__name__)
 
@@ -315,63 +325,74 @@ class Backend(QObject):
 
     @Property(str, notify=statusChanged)
     def cookie(self) -> str:
-        """当前 Cookie（从凭据加载）。
+        """当前 SESSDATA（遮蔽后）。
 
         Returns:
-            Cookie 字符串。
+            遮蔽后的 SESSDATA。
         """
         if self._credentials:
-            return self._credentials[0].cookie
+            return self._credentials[0].masked_sessdata
+        return ""
+
+    @Property(str, notify=statusChanged)
+    def rawCookie(self) -> str:
+        """当前 SESSDATA（原始值）。
+
+        Returns:
+            原始 SESSDATA。
+        """
+        if self._credentials:
+            return self._credentials[0].sessdata
         return ""
 
     @Slot(str)
-    def save_cookie(self, cookie: str) -> None:
-        """保存 Cookie 到加密存储。
+    def save_sessdata(self, sessdata: str) -> None:
+        """保存 SESSDATA 到加密存储。
 
         Args:
-            cookie: Cookie 字符串。
+            sessdata: SESSDATA 值。
         """
-        if not cookie:
+        if not sessdata:
             return
 
         if self._credentials:
-            self._credentials[0].cookie = cookie
+            self._credentials[0].sessdata = sessdata
         else:
-            self._credentials = [Credential(name="默认", cookie=cookie)]
+            self._credentials = [AccountCredential(sessdata=sessdata)]
 
         self._credential_manager.save_credentials(self._credentials)
-        logger.info("Cookie 已保存。")
+        logger.info("SESSDATA 已保存。")
 
     @Slot(str, str, str)
-    def start_inspect(self, bvid: str, cookie: str, xml_dir: str) -> None:
+    def start_inspect(self, bvid: str, sessdata: str, xml_dir: str) -> None:
         """开始校验（在子线程中运行）。
 
         Args:
             bvid: 视频 BV 号。
-            cookie: Cookie 字符串。
+            sessdata: SESSDATA 值。
             xml_dir: 本地 XML 文件目录。
         """
         if self._is_running:
             return
 
-        # 保存 Cookie
-        self.save_cookie(cookie)
+        # 保存 SESSDATA
+        self.save_sessdata(sessdata)
 
         self._xml_dir = xml_dir
         self._is_running = True
         self.isRunningChanged.emit(True)
         logger.info(f"开始检测: bvid={bvid}, xml_dir={xml_dir}")
-        thread = threading.Thread(target=self._run_inspect, args=(bvid, cookie, xml_dir))
+        thread = threading.Thread(target=self._run_inspect, args=(bvid, sessdata, xml_dir))
         thread.daemon = True
         thread.start()
         logger.info("线程已启动")
 
-    def _run_inspect(self, bvid: str, cookie: str, xml_dir: str) -> None:
+    def _run_inspect(self, bvid: str, sessdata: str, xml_dir: str) -> None:
         """实际的校验逻辑（在子线程中运行）。
 
         Args:
             bvid: 视频 BV 号。
-            cookie: Cookie 字符串。
+            sessdata: SESSDATA 值。
             xml_dir: 本地 XML 文件目录。
         """
         try:
@@ -381,7 +402,7 @@ class Backend(QObject):
             )
             report = self._orchestrator.run(
                 bvid=bvid,
-                cookie=cookie,
+                sessdata=sessdata,
                 xml_dir=xml_dir,
                 on_status=lambda s: self.statusChanged.emit(s),
             )

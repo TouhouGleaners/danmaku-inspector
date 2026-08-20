@@ -13,9 +13,9 @@ ApplicationWindow {
     color: "#f0f2f5"
 
     onClosing: function(closeEvent) {
-        // 窗口关闭时保存 Cookie
+        // 窗口关闭时保存 SESSDATA
         if (backend && cookieInput.text) {
-            backend.save_cookie(cookieInput.text)
+            backend.save_sessdata(cookieInput.text)
         }
     }
 
@@ -99,7 +99,8 @@ ApplicationWindow {
                     TextField {
                         id: cookieInput
                         placeholderText: "SESSDATA=xxx"
-                        text: backend.cookie
+                        text: backend.rawCookie
+                        echoMode: TextInput.Password
                         Layout.fillWidth: true
                         enabled: !backend.isRunning
                         background: Rectangle {
