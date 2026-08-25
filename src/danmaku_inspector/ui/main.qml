@@ -19,15 +19,38 @@ ApplicationWindow {
         }
     }
 
-    // 角色常量（与 ResultModel 角色定义一致）
-    readonly property int roleOnlineCount: 260
-    readonly property int roleExpectedCount: 261
-    readonly property int roleExtraCount: 262
-    readonly property int roleMismatchCount: 263
-    readonly property int roleUnsentCount: 264
-    readonly property int roleUnsentRate: 265
 
     property var selectedPart: null
+    property string statusFilter: "ALL"
+    property int sortColumn: 0  // 0=分P, 1=漏发率, 2=错发, 3=漏发
+    property int sortOrder: 1   // 1=升序, -1=降序
+
+    // 筛选后的数据模型
+    ListModel { id: filteredModel }
+
+    // 更新筛选数据
+    function updateFilteredModel() {
+        var reports = backend.getFilteredReports(statusFilter, sortColumn, sortOrder)
+        filteredModel.clear()
+        for (var i = 0; i < reports.length; i++) {
+            filteredModel.append(reports[i])
+        }
+    }
+
+    // 监听筛选条件变化
+    onStatusFilterChanged: updateFilteredModel()
+    onSortColumnChanged: updateFilteredModel()
+    onSortOrderChanged: updateFilteredModel()
+
+    // 监听检测完成
+    Connections {
+        target: backend
+        function onStatusChanged() {
+            if (backend.status.startsWith("完成")) {
+                updateFilteredModel()
+            }
+        }
+    }
 
     // 主内容
     ColumnLayout {
@@ -166,6 +189,7 @@ ApplicationWindow {
             height: 3
         }
 
+
         // 结果表格
         Rectangle {
             Layout.fillWidth: true
@@ -188,14 +212,152 @@ ApplicationWindow {
                         anchors.leftMargin: 16
                         anchors.rightMargin: 16
 
-                        Text { text: "分P"; font.pixelSize: 11; font.bold: true; color: "#666"; Layout.preferredWidth: 50; horizontalAlignment: Text.AlignHCenter }
-                        Text { text: "状态"; font.pixelSize: 11; font.bold: true; color: "#666"; Layout.preferredWidth: 70; horizontalAlignment: Text.AlignHCenter }
-                        Text { text: "线上"; font.pixelSize: 11; font.bold: true; color: "#666"; Layout.preferredWidth: 60; horizontalAlignment: Text.AlignHCenter }
-                        Text { text: "应发"; font.pixelSize: 11; font.bold: true; color: "#666"; Layout.preferredWidth: 60; horizontalAlignment: Text.AlignHCenter }
-                        Text { text: "漏发"; font.pixelSize: 11; font.bold: true; color: "#666"; Layout.preferredWidth: 60; horizontalAlignment: Text.AlignHCenter }
-                        Text { text: "漏发率"; font.pixelSize: 11; font.bold: true; color: "#666"; Layout.preferredWidth: 60; horizontalAlignment: Text.AlignHCenter }
-                        Text { text: "错发"; font.pixelSize: 11; font.bold: true; color: "#666"; Layout.preferredWidth: 60; horizontalAlignment: Text.AlignHCenter }
-                        Text { text: "操作"; font.pixelSize: 11; font.bold: true; color: "#666"; Layout.preferredWidth: 240; horizontalAlignment: Text.AlignHCenter }
+                        // 分P
+                        Rectangle {
+                            Layout.preferredWidth: 50
+                            Layout.fillHeight: true
+                            color: partHeaderMouse.containsMouse ? "#f0f0f0" : "transparent"
+                            Text {
+                                anchors.centerIn: parent
+                                text: sortColumn === 0 ? ("分P" + (sortOrder === 1 ? " ↑" : " ↓")) : "分P"
+                                font.pixelSize: 11; font.bold: sortColumn === 0; color: sortColumn === 0 ? "#1976d2" : "#666"
+                            }
+                            MouseArea {
+                                id: partHeaderMouse
+                                anchors.fill: parent
+                                hoverEnabled: true
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: {
+                                    if (sortColumn === 0) sortOrder = sortOrder === 1 ? -1 : 1
+                                    else { sortColumn = 0; sortOrder = 1 }
+                                    updateFilteredModel()
+                                }
+                            }
+                        }
+
+                        // 状态（点击弹出筛选菜单）
+                        Rectangle {
+                            Layout.preferredWidth: 70
+                            Layout.fillHeight: true
+                            color: statusHeaderMouse.containsMouse || statusMenu.visible ? "#f0f0f0" : "transparent"
+                            Text {
+                                anchors.centerIn: parent
+                                text: statusFilter === "ALL" ? "状态 ▾" : "状态 ●"
+                                font.pixelSize: 11
+                                font.bold: true
+                                color: statusFilter === "ALL" ? "#666" : "#1976d2"
+                            }
+                            MouseArea {
+                                id: statusHeaderMouse
+                                anchors.fill: parent
+                                hoverEnabled: true
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: statusMenu.popup(statusHeaderMouse.x, statusHeaderMouse.y + statusHeaderMouse.height)
+                            }
+
+                            Menu {
+                                id: statusMenu
+                                MenuItem {
+                                    text: "全部"
+                                    onTriggered: statusFilter = "ALL"
+                                }
+                                MenuSeparator {}
+                                MenuItem {
+                                    text: "通过"
+                                    onTriggered: statusFilter = "PASS"
+                                }
+                                MenuItem {
+                                    text: "漏发"
+                                    onTriggered: statusFilter = "UNSENT"
+                                }
+                                MenuItem {
+                                    text: "错发"
+                                    onTriggered: statusFilter = "EXTRA"
+                                }
+                                MenuItem {
+                                    text: "错发+漏发"
+                                    onTriggered: statusFilter = "BOTH"
+                                }
+                            }
+                        }
+
+                        // 线上
+                        Rectangle { Layout.preferredWidth: 60; Layout.fillHeight: true; Text { anchors.centerIn: parent; text: "线上"; font.pixelSize: 11; color: "#666" } }
+
+                        // 应发
+                        Rectangle { Layout.preferredWidth: 60; Layout.fillHeight: true; Text { anchors.centerIn: parent; text: "应发"; font.pixelSize: 11; color: "#666" } }
+
+                        // 漏发（可排序）
+                        Rectangle {
+                            Layout.preferredWidth: 60
+                            Layout.fillHeight: true
+                            color: unsentHeaderMouse.containsMouse ? "#f0f0f0" : "transparent"
+                            Text {
+                                anchors.centerIn: parent
+                                text: sortColumn === 3 ? ("漏发" + (sortOrder === 1 ? " ↑" : " ↓")) : "漏发"
+                                font.pixelSize: 11; font.bold: sortColumn === 3; color: sortColumn === 3 ? "#1976d2" : "#666"
+                            }
+                            MouseArea {
+                                id: unsentHeaderMouse
+                                anchors.fill: parent
+                                hoverEnabled: true
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: {
+                                    if (sortColumn === 3) sortOrder = sortOrder === 1 ? -1 : 1
+                                    else { sortColumn = 3; sortOrder = 1 }
+                                    updateFilteredModel()
+                                }
+                            }
+                        }
+
+                        // 漏发率（可排序）
+                        Rectangle {
+                            Layout.preferredWidth: 60
+                            Layout.fillHeight: true
+                            color: rateHeaderMouse.containsMouse ? "#f0f0f0" : "transparent"
+                            Text {
+                                anchors.centerIn: parent
+                                text: sortColumn === 1 ? ("漏发率" + (sortOrder === 1 ? " ↑" : " ↓")) : "漏发率"
+                                font.pixelSize: 11; font.bold: sortColumn === 1; color: sortColumn === 1 ? "#1976d2" : "#666"
+                            }
+                            MouseArea {
+                                id: rateHeaderMouse
+                                anchors.fill: parent
+                                hoverEnabled: true
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: {
+                                    if (sortColumn === 1) sortOrder = sortOrder === 1 ? -1 : 1
+                                    else { sortColumn = 1; sortOrder = 1 }
+                                    updateFilteredModel()
+                                }
+                            }
+                        }
+
+                        // 错发（可排序）
+                        Rectangle {
+                            Layout.preferredWidth: 60
+                            Layout.fillHeight: true
+                            color: mismatchHeaderMouse.containsMouse ? "#f0f0f0" : "transparent"
+                            Text {
+                                anchors.centerIn: parent
+                                text: sortColumn === 2 ? ("错发" + (sortOrder === 1 ? " ↑" : " ↓")) : "错发"
+                                font.pixelSize: 11; font.bold: sortColumn === 2; color: sortColumn === 2 ? "#1976d2" : "#666"
+                            }
+                            MouseArea {
+                                id: mismatchHeaderMouse
+                                anchors.fill: parent
+                                hoverEnabled: true
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: {
+                                    if (sortColumn === 2) sortOrder = sortOrder === 1 ? -1 : 1
+                                    else { sortColumn = 2; sortOrder = 1 }
+                                    updateFilteredModel()
+                                }
+                            }
+                        }
+
+                        // 操作
+                        Rectangle { Layout.preferredWidth: 240; Layout.fillHeight: true; Text { anchors.centerIn: parent; text: "操作"; font.pixelSize: 11; color: "#666" } }
                     }
                 }
 
@@ -298,7 +460,7 @@ ApplicationWindow {
                     Layout.fillWidth: true
                     Layout.fillHeight: true
                     clip: true
-                    model: backend.resultModel
+                    model: filteredModel
                     visible: count > 0
 
                     ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded; width: 6 }
@@ -447,7 +609,7 @@ ApplicationWindow {
             Item { Layout.fillWidth: true }
 
             Text {
-                text: resultView.count > 0 ? "共 " + resultView.count + " 个分P" : ""
+                text: filteredModel.count > 0 ? "显示 " + filteredModel.count + " / " + backend.resultModel.rowCount() + " 个分P" : ""
                 font.pixelSize: 11
                 color: "#999"
             }
@@ -479,7 +641,7 @@ ApplicationWindow {
             RowLayout {
                 Layout.fillWidth: true
                 Text {
-                    text: selectedPart !== null ? backend.resultModel.data(backend.resultModel.index(selectedPart, 0), 257) + " 详情" : ""
+                    text: selectedPart !== null ? filteredModel.get(selectedPart).partNum + " 详情" : ""
                     font.pixelSize: 16
                     font.bold: true
                     color: "#1a1a1a"
@@ -503,11 +665,11 @@ ApplicationWindow {
 
                 Repeater {
                     model: [
-                        { label: "线上弹幕", value: selectedPart !== null ? backend.resultModel.data(backend.resultModel.index(selectedPart, 0), roleOnlineCount) : "0", color: "#333" },
-                        { label: "应发弹幕", value: selectedPart !== null ? backend.resultModel.data(backend.resultModel.index(selectedPart, 0), roleExpectedCount) : "0", color: "#333" },
-                        { label: "漏发数量", value: selectedPart !== null ? backend.resultModel.data(backend.resultModel.index(selectedPart, 0), roleUnsentCount) : "0", color: "#e65100" },
-                        { label: "漏发比例", value: selectedPart !== null ? backend.resultModel.data(backend.resultModel.index(selectedPart, 0), roleUnsentRate) : "0%", color: "#e65100" },
-                        { label: "错发数量", value: selectedPart !== null ? backend.resultModel.data(backend.resultModel.index(selectedPart, 0), roleMismatchCount) : "0", color: "#c62828" },
+                        { label: "线上弹幕", value: selectedPart !== null ? filteredModel.get(selectedPart).onlineCount : "0", color: "#333" },
+                        { label: "应发弹幕", value: selectedPart !== null ? filteredModel.get(selectedPart).expectedCount : "0", color: "#333" },
+                        { label: "漏发数量", value: selectedPart !== null ? filteredModel.get(selectedPart).unsentCount : "0", color: "#e65100" },
+                        { label: "漏发比例", value: selectedPart !== null ? filteredModel.get(selectedPart).unsentRate : "0%", color: "#e65100" },
+                        { label: "错发数量", value: selectedPart !== null ? filteredModel.get(selectedPart).mismatchCount : "0", color: "#c62828" },
                     ]
 
                     Rectangle {

@@ -4,7 +4,7 @@
 """
 import logging
 import threading
-from typing import Any
+from typing import Any, Callable
 from pathlib import Path
 
 
@@ -284,100 +284,125 @@ class Backend(QObject):
         self._credential_manager = CredentialManager()
         self._app_config = self._config_manager.load()
         self._credentials = self._credential_manager.load_credentials()
+        self._active_index: int = 0 if self._credentials else -1
+
+        # 初始化账号模型
+        self._refresh_account_model()
 
         self._inspectFinished.connect(self._on_inspect_finished)
 
+    # region QML 属性
+
     @Property(bool, notify=isRunningChanged)
     def isRunning(self) -> bool:
-        """是否正在运行。
-
-        Returns:
-            True 表示正在运行。
-        """
         return self._is_running
 
     @Property(str, notify=statusChanged)
     def status(self) -> str:
-        """当前状态文本。
-
-        Returns:
-            状态文本。
-        """
         return self._status
 
     @Property(QObject, constant=True)
     def resultModel(self) -> ResultModel:
-        """校验结果数据模型。
-
-        Returns:
-            ResultModel 实例。
-        """
         return self._result_model
 
     @Property(QObject, constant=True)
     def anomalyModel(self) -> AnomalyModel:
-        """异常发送者数据模型。
-
-        Returns:
-            AnomalyModel 实例。
-        """
         return self._anomaly_model
 
     @Property(str, notify=statusChanged)
     def cookie(self) -> str:
-        """当前 SESSDATA（遮蔽后）。
-
-        Returns:
-            遮蔽后的 SESSDATA。
-        """
-        if self._credentials:
-            return self._credentials[0].masked_sessdata
+        """当前 SESSDATA（遮蔽后）。"""
+        if self._active_index >= 0 and self._active_index < len(self._credentials):
+            return self._credentials[self._active_index].masked_sessdata
         return ""
 
     @Property(str, notify=statusChanged)
     def rawCookie(self) -> str:
-        """当前 SESSDATA（原始值）。
-
-        Returns:
-            原始 SESSDATA。
-        """
-        if self._credentials:
-            return self._credentials[0].sessdata
+        """当前 SESSDATA（原始值）。"""
+        if self._active_index >= 0 and self._active_index < len(self._credentials):
+            return self._credentials[self._active_index].sessdata
         return ""
+
+    @Property(str, constant=True)
+    def version(self) -> str:
+        from danmaku_inspector._version import __version__
+        return __version__
+
+    # endregion
+
+    # region QML 方法
 
     @Slot(str)
     def save_sessdata(self, sessdata: str) -> None:
-        """保存 SESSDATA 到加密存储。
-
-        Args:
-            sessdata: SESSDATA 值。
-        """
+        """保存 SESSDATA 到加密存储。"""
         if not sessdata:
             return
-
         if self._credentials:
             self._credentials[0].sessdata = sessdata
         else:
             self._credentials = [AccountCredential(sessdata=sessdata)]
-
         self._credential_manager.save_credentials(self._credentials)
         logger.info("SESSDATA 已保存。")
 
+    @Slot(str, int, int, result=list)
+    def getFilteredReports(self, status_filter: str, sort_index: int, sort_order: int) -> list[dict]:
+        """获取筛选和排序后的报告数据。"""
+        if not self._orchestrator or not self._orchestrator.report:
+            return []
+
+        reports = self._orchestrator.report.reports
+
+        # 筛选
+        if status_filter != "ALL":
+            reports = [r for r in reports if r.status.value == status_filter]
+
+        # 排序
+        sort_keys: dict[int, Callable[[PartReport], Any]] = {
+            0: lambda r: r.part_num,
+            1: lambda r: r.unsent_rate,
+            2: lambda r: sum(a.extra_count for a in r.anomalies),
+            3: lambda r: r.unsent_count,
+        }
+        sort_fn = sort_keys.get(sort_index, sort_keys[0])
+        reports = sorted(reports, key=sort_fn, reverse=sort_order == -1)
+
+        # 转换为字典
+        result = []
+        for r in reports:
+            mismatch_count = sum(a.extra_count for a in r.anomalies)
+            source_part = "-"
+            match_rate = "-"
+            if r.anomalies:
+                source_part = f"P{r.anomalies[0].likely_source_part}"
+                match_rate = f"{r.anomalies[0].match_rate:.0%}"
+
+            result.append({
+                "partNum": f"P{r.part_num}",
+                "status": r.status.value,
+                "statusText": {
+                    PartStatus.PASS: "通过",
+                    PartStatus.EXTRA: "错发",
+                    PartStatus.UNSENT: "漏发",
+                    PartStatus.BOTH: "错发+漏发",
+                }.get(r.status, r.status.value),
+                "onlineCount": r.online_count,
+                "expectedCount": r.expected_count,
+                "extraCount": r.extra_count,
+                "mismatchCount": mismatch_count,
+                "unsentCount": r.unsent_count,
+                "unsentRate": f"{r.unsent_rate:.1%}",
+                "sourcePart": source_part,
+                "matchRate": match_rate,
+            })
+
+        return result
+
     @Slot(str, str, str)
     def start_inspect(self, bvid: str, sessdata: str, xml_dir: str) -> None:
-        """开始校验（在子线程中运行）。
-
-        Args:
-            bvid: 视频 BV 号。
-            sessdata: SESSDATA 值。
-            xml_dir: 本地 XML 文件目录。
-        """
+        """开始校验（在子线程中运行）。"""
         if self._is_running:
             return
-
-        # 保存 SESSDATA
         self.save_sessdata(sessdata)
-
         self._xml_dir = xml_dir
         self._is_running = True
         self.isRunningChanged.emit(True)
@@ -387,14 +412,193 @@ class Backend(QObject):
         thread.start()
         logger.info("线程已启动")
 
-    def _run_inspect(self, bvid: str, sessdata: str, xml_dir: str) -> None:
-        """实际的校验逻辑（在子线程中运行）。
+    @Slot(int)
+    def show_part_detail(self, index: int) -> None:
+        """显示指定分P的详情。"""
+        if self._orchestrator and self._orchestrator.report and 0 <= index < len(self._orchestrator.report.reports):
+            report = self._orchestrator.report.reports[index]
+            self._anomaly_model.set_anomalies(report.anomalies)
 
-        Args:
-            bvid: 视频 BV 号。
-            sessdata: SESSDATA 值。
-            xml_dir: 本地 XML 文件目录。
-        """
+    @Slot(int)
+    def export_part_csv(self, part_index: int) -> None:
+        """导出单个分P的 CSV。"""
+        if self._exporter:
+            path = self._exporter.export_part_csv(part_index)
+            if path:
+                self._status = f"已导出: {path.name}"
+                self.statusChanged.emit(self._status)
+
+    @Slot(int)
+    def export_part_diff(self, part_index: int) -> None:
+        """导出单个分P的差集。"""
+        if self._exporter:
+            path = self._exporter.export_part_diff(part_index)
+            if path:
+                self._status = f"已导出: {path.name}"
+                self.statusChanged.emit(self._status)
+
+    @Slot(int)
+    def export_part_danmaku_csv(self, part_index: int) -> None:
+        """导出单个分P的全量弹幕 CSV。"""
+        if self._exporter:
+            path = self._exporter.export_part_danmaku_csv(part_index)
+            if path:
+                self._status = f"已导出: {path.name}"
+                self.statusChanged.emit(self._status)
+
+    @Slot(int)
+    def export_part_danmaku_xml(self, part_index: int) -> None:
+        """导出单个分P的全量弹幕 XML。"""
+        if self._exporter:
+            path = self._exporter.export_part_danmaku_xml(part_index)
+            if path:
+                self._status = f"已导出: {path.name}"
+                self.statusChanged.emit(self._status)
+
+    @Slot()
+    def export_csv(self) -> None:
+        """导出全部分P的 CSV。"""
+        if self._exporter:
+            path = self._exporter.export_report_csv()
+            self._status = f"已导出: {path.name}"
+            self.statusChanged.emit(self._status)
+
+    @Slot(str)
+    def export_diff(self, output_dir: str) -> None:
+        """批量导出漏发弹幕。"""
+        if self._exporter and self._orchestrator:
+            self._exporter.set_output_dir(output_dir)
+            threshold = self._orchestrator._inspection_config.unsent_rate_threshold
+            exported = self._exporter.export_diff_batch(threshold)
+            self._status = f"导出完成，共 {len(exported)} 个文件"
+            self.statusChanged.emit(self._status)
+
+    @Slot(int, result=dict)
+    def getAccount(self, index: int) -> dict:
+        """获取账号信息。"""
+        if 0 <= index < len(self._credentials):
+            acc = self._credentials[index]
+            return {
+                "uid": str(acc.uid),
+                "name": acc.name,
+                "maskedSessdata": acc.masked_sessdata,
+                "sessdata": acc.sessdata,
+                "level": acc.level,
+                "isValid": acc.is_valid or False,
+                "isActive": index == self._active_index,
+            }
+        return {}
+
+    @Slot(int, result=int)
+    def getAccountCount(self) -> int:
+        return len(self._credentials)
+
+    @Slot(str)
+    def addAccount(self, sessdata: str) -> None:
+        """添加账号。"""
+        if not sessdata:
+            return
+        for acc in self._credentials:
+            if acc.sessdata == sessdata:
+                logger.warning("SESSDATA 已存在，跳过添加。")
+                return
+        acc = AccountCredential(sessdata=sessdata)
+        self._credentials.append(acc)
+        if len(self._credentials) == 1:
+            self._active_index = 0
+        self._credential_manager.save_credentials(self._credentials)
+        self._refresh_account_model()
+        self.statusChanged.emit(self._status)
+        logger.info(f"已添加账号，共 {len(self._credentials)} 个。")
+
+    @Slot(int, str)
+    def editAccount(self, index: int, sessdata: str) -> None:
+        """编辑账号。"""
+        if not (0 <= index < len(self._credentials) and sessdata):
+            return
+        for i, acc in enumerate(self._credentials):
+            if i != index and acc.sessdata == sessdata:
+                logger.warning("SESSDATA 已存在，跳过编辑。")
+                return
+        self._credentials[index].sessdata = sessdata
+        self._credentials[index].is_valid = None
+        self._credential_manager.save_credentials(self._credentials)
+        self._refresh_account_model()
+        self.statusChanged.emit(self._status)
+        logger.info(f"已编辑账号 {index}。")
+
+    @Slot(int)
+    def deleteAccount(self, index: int) -> None:
+        """删除账号。"""
+        if not (0 <= index < len(self._credentials)):
+            return
+        self._credentials.pop(index)
+        if self._active_index >= len(self._credentials):
+            self._active_index = len(self._credentials) - 1
+        self._credential_manager.save_credentials(self._credentials)
+        self._refresh_account_model()
+        self.statusChanged.emit(self._status)
+        logger.info(f"已删除账号，剩余 {len(self._credentials)} 个。")
+
+    @Slot(int)
+    def useAccount(self, index: int) -> None:
+        """切换到指定账号。"""
+        if 0 <= index < len(self._credentials):
+            self._active_index = index
+            self._refresh_account_model()
+            self.statusChanged.emit(self._status)
+            logger.info(f"已切换到账号 {index}。")
+
+    @Slot(int)
+    def checkAccount(self, index: int) -> None:
+        """检测账号是否有效。"""
+        if not (0 <= index < len(self._credentials)):
+            return
+        acc = self._credentials[index]
+        logger.info(f"正在检测账号 {index}...")
+        try:
+            from danmaku_inspector.repo.bilibili.fetcher import check_account, get_user_info
+            is_valid = check_account(acc.sessdata, self._app_config.network)
+            acc.is_valid = is_valid
+            if is_valid:
+                try:
+                    user_info = get_user_info(acc.sessdata, self._app_config.network)
+                    acc.uid = user_info.get("mid", 0)
+                    acc.name = user_info.get("uname", "")
+                    acc.level = user_info.get("level_info", {}).get("current_level", -1)
+                except Exception as e:
+                    logger.warning(f"获取用户信息失败: {e}")
+            self._credential_manager.save_credentials(self._credentials)
+            self._refresh_account_model()
+            self.statusChanged.emit(self._status)
+            logger.info(f"账号 {index} 检测结果: {'有效' if is_valid else '失效'}")
+        except Exception as e:
+            logger.error(f"账号 {index} 检测失败: {e}")
+            acc.is_valid = False
+            self._refresh_account_model()
+            self.statusChanged.emit(self._status)
+
+    # endregion
+
+    # region 内部方法
+
+    def _refresh_account_model(self) -> None:
+        """刷新账号数据模型。"""
+        accounts = []
+        for i, acc in enumerate(self._credentials):
+            accounts.append({
+                "uid": str(acc.uid),
+                "name": acc.name,
+                "maskedSessdata": acc.masked_sessdata,
+                "sessdata": acc.sessdata,
+                "level": acc.level,
+                "isValid": acc.is_valid or False,
+                "isActive": i == self._active_index,
+            })
+        self._account_model.set_accounts(accounts) if hasattr(self, '_account_model') else None
+
+    def _run_inspect(self, bvid: str, sessdata: str, xml_dir: str) -> None:
+        """实际的校验逻辑（在子线程中运行）。"""
         try:
             self._orchestrator = InspectionOrchestrator(
                 inspection_config=self._app_config.inspection,
@@ -445,87 +649,4 @@ class Backend(QObject):
         self._status = f"完成，共 {report.total_parts} 个分P"
         self.statusChanged.emit(self._status)
 
-    @Slot(int)
-    def show_part_detail(self, index: int) -> None:
-        """显示指定分P的详情。
-
-        Args:
-            index: 分P索引。
-        """
-        if self._orchestrator and self._orchestrator.report and 0 <= index < len(self._orchestrator.report.reports):
-            report = self._orchestrator.report.reports[index]
-            self._anomaly_model.set_anomalies(report.anomalies)
-
-    @Slot(int)
-    def export_part_csv(self, part_index: int) -> None:
-        """导出单个分P的 CSV。
-
-        Args:
-            part_index: 分P索引。
-        """
-        if self._exporter:
-            path = self._exporter.export_part_csv(part_index)
-            if path:
-                self._status = f"已导出: {path.name}"
-                self.statusChanged.emit(self._status)
-
-    @Slot(int)
-    def export_part_diff(self, part_index: int) -> None:
-        """导出单个分P的差集。
-
-        Args:
-            part_index: 分P索引。
-        """
-        if self._exporter:
-            path = self._exporter.export_part_diff(part_index)
-            if path:
-                self._status = f"已导出: {path.name}"
-                self.statusChanged.emit(self._status)
-
-    @Slot(int)
-    def export_part_danmaku_csv(self, part_index: int) -> None:
-        """导出单个分P的全量弹幕 CSV。
-
-        Args:
-            part_index: 分P索引。
-        """
-        if self._exporter:
-            path = self._exporter.export_part_danmaku_csv(part_index)
-            if path:
-                self._status = f"已导出: {path.name}"
-                self.statusChanged.emit(self._status)
-
-    @Slot(int)
-    def export_part_danmaku_xml(self, part_index: int) -> None:
-        """导出单个分P的全量弹幕 XML。
-
-        Args:
-            part_index: 分P索引。
-        """
-        if self._exporter:
-            path = self._exporter.export_part_danmaku_xml(part_index)
-            if path:
-                self._status = f"已导出: {path.name}"
-                self.statusChanged.emit(self._status)
-
-    @Slot()
-    def export_csv(self) -> None:
-        """导出全部分P的 CSV。"""
-        if self._exporter:
-            path = self._exporter.export_report_csv()
-            self._status = f"已导出: {path.name}"
-            self.statusChanged.emit(self._status)
-
-    @Slot(str)
-    def export_diff(self, output_dir: str) -> None:
-        """批量导出漏发弹幕。
-
-        Args:
-            output_dir: 输出目录。
-        """
-        if self._exporter and self._orchestrator:
-            self._exporter.set_output_dir(output_dir)
-            threshold = self._orchestrator._inspection_config.unsent_rate_threshold
-            exported = self._exporter.export_diff_batch(threshold)
-            self._status = f"导出完成，共 {len(exported)} 个文件"
-            self.statusChanged.emit(self._status)
+    # endregion

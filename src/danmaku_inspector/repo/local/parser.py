@@ -14,6 +14,24 @@ from danmaku_inspector.types.models import DanmakuFingerprint
 _FILENAME_PATTERN = re.compile(r"^(?:P)?(\d+)")
 
 
+def _find_d_elements(root: ET.Element) -> list[ET.Element]:
+    """查找所有 <d> 标签，兼容有无命名空间的情况。"""
+    # 先尝试无命名空间
+    elems = root.findall("d")
+    if elems:
+        return elems
+
+    # 再尝试带命名空间
+    if root.tag.startswith("{"):
+        ns = root.tag.split("}")[0] + "}"
+        elems = root.findall(f"{ns}d")
+        if elems:
+            return elems
+
+    # 兜底：遍历所有元素
+    return [elem for elem in root.iter() if elem.tag.endswith("}d") or elem.tag == "d"]
+
+
 def parse_xml(xml_path: Path) -> Counter[DanmakuFingerprint]:
     """解析单个 XML 文件，返回弹幕指纹 Counter。
 
@@ -27,7 +45,7 @@ def parse_xml(xml_path: Path) -> Counter[DanmakuFingerprint]:
     root = tree.getroot()
 
     counter: Counter[DanmakuFingerprint] = Counter()
-    for elem in root.findall("d"):
+    for elem in _find_d_elements(root):
         p_attr = elem.get("p", "")
         content = elem.text or ""
 

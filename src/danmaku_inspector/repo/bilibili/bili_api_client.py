@@ -126,7 +126,18 @@ class BiliApiClient:
         url = "https://api.bilibili.com/x/web-interface/view"
         params = {"bvid": bvid}
         logger.info(f"正在获取视频信息: {bvid}")
-        return self._request("GET", url, params=params)
+        data = self._request("GET", url, params=params)
+
+        # 转换 pages 为字典格式
+        pages = {}
+        for i, page in enumerate(data.get("pages", []), start=1):
+            pages[i] = {"cid": page["cid"], "title": page["part"]}
+
+        return {
+            "title": data.get("title", ""),
+            "aid": data.get("aid", 0),
+            "pages": pages,
+        }
 
     def get_user_info(self) -> dict:
         """获取当前登录用户的信息。
