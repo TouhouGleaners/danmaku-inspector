@@ -108,14 +108,22 @@ class CheckpointStore:
             logger.warning(f"检查点损坏，忽略并重抓: {path}, Error: {e}")
             return None
 
+        # 根节点或字段结构不符时按损坏处理，避免异常冒出让该分P永久失败
+        if not isinstance(data, dict):
+            logger.warning(f"检查点根节点不是对象，忽略并重抓: {path}")
+            return None
+
         if data.get("version") != _FORMAT_VERSION:
             logger.warning(f"检查点版本不符，忽略并重抓: {path}")
             return None
 
         try:
+            raw_segments = data.get("segments", {})
+            if not isinstance(raw_segments, dict):
+                raise TypeError(f"segments 应为字典，实际为 {type(raw_segments).__name__}")
             segments = {
                 int(seg_no): [CrawledDanmaku.from_dict(item) for item in items]
-                for seg_no, items in data.get("segments", {}).items()
+                for seg_no, items in raw_segments.items()
             }
             return CrawlCheckpoint(
                 bvid=data["bvid"],
@@ -125,7 +133,7 @@ class CheckpointStore:
                 segments=segments,
                 created_at=data.get("created_at", ""),
             )
-        except (KeyError, TypeError, ValueError) as e:
+        except (KeyError, TypeError, ValueError, AttributeError) as e:
             logger.warning(f"检查点内容不合法，忽略并重抓: {path}, Error: {e}")
             return None
 

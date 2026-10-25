@@ -100,8 +100,8 @@ class InspectionOrchestrator:
             video_info = client.get_video_info(bvid)
 
             # 3. 构建抓取目标：本地有 XML 且线上有对应分P
-            targets = self._build_targets(video_info)
-            if not targets:
+            targets, missing_parts = self._build_targets(video_info)
+            if not targets and not missing_parts:
                 raise ValueError("没有可校验的分P")
 
             # 4. 抓取线上弹幕
@@ -119,9 +119,9 @@ class InspectionOrchestrator:
                 on_progress=on_progress,
             )
 
-        # 5. 拆分：完整的进比对，失败的单列
+        # 5. 拆分：完整的进比对，失败的与线上无对应分P的一起单列
         self.all_online = {}
-        failed_parts: list[CrawlFail] = []
+        failed_parts: list[CrawlFail] = list(missing_parts)
         for result in results.values():
             if isinstance(result, CrawlOk):
                 self.all_online[result.part_num] = (result.online, result.sender_map)
@@ -146,7 +146,7 @@ class InspectionOrchestrator:
         self.report = InspectionReport(
             bvid=bvid,
             title=video_info["title"],
-            total_parts=len(results),
+            total_parts=len(results) + len(missing_parts),
             reports=reports,
             timestamp=datetime.now().isoformat(),
             failed_parts=failed_parts,
@@ -154,26 +154,32 @@ class InspectionOrchestrator:
 
         return self.report
 
-    def _build_targets(self, video_info: dict) -> list[tuple[int, int, int]]:
-        """构建抓取目标列表。
+    def _build_targets(self, video_info: dict) -> tuple[list[tuple[int, int, int]], list[CrawlFail]]:
+        """构建抓取目标列表，并标记线上无对应分P的本地分P。
 
         Args:
             video_info (dict): get_video_info 返回的视频元数据。
 
         Returns:
-            list[tuple[int, int, int]]: （分P编号, cid, 时长秒）列表，按分P编号升序。
+            tuple[list[tuple[int, int, int]], list[CrawlFail]]: 元素为
+            （抓取目标列表, 线上无对应分P的失败列表），目标按分P编号升序。
         """
         pages: dict[int, dict] = video_info["pages"]
         targets: list[tuple[int, int, int]] = []
+        missing: list[CrawlFail] = []
 
         for part_num in sorted(self.all_expected.keys()):
             page = pages.get(part_num)
             if page is None:
-                logger.warning(f"P{part_num} 本地有 XML 但线上无对应分P，跳过")
+                logger.warning(f"P{part_num} 本地有 XML 但线上无对应分P")
+                missing.append(CrawlFail(
+                    part_num=part_num,
+                    reason="本地有 XML 但线上无对应分P",
+                ))
                 continue
             targets.append((part_num, page["cid"], page["duration"]))
 
-        return targets
+        return targets, missing
 
     def _crawl_parts(
         self,

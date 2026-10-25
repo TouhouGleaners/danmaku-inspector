@@ -103,15 +103,15 @@ class CrawlFail:
 
     Attributes:
         part_num (int): 分P编号。
-        cid (int): 分P 的 cid。
-        segments_total (int): 该分P的总段数。
         reason (str): 失败原因。
+        cid (int | None): 分P 的 cid，线上无对应分P 时为 None。
+        segments_total (int | None): 该分P的总段数，未开始抓取时为 None。
         failed_segment (int | None): 失败所在分段号，未开始抓取时为 None。
     """
     part_num: int
-    cid: int
-    segments_total: int
     reason: str
+    cid: int | None = None
+    segments_total: int | None = None
     failed_segment: int | None = None
 
 
