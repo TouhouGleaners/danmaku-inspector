@@ -3,13 +3,19 @@
 把各层模块的功能暴露给 QML 调用。
 """
 import logging
-import threading
 from typing import Any, Callable
 from pathlib import Path
 
 
 def _mask(value: str) -> str:
-    """遮蔽凭据：保留前4后4，中间用 * 替代，总长不超过 20。"""
+    """遮蔽凭据，保留首尾各 4 个字符，中间以 * 替代。
+
+    Args:
+        value (str): 待遮蔽的原始字符串。
+
+    Returns:
+        str: 遮蔽后的字符串，长度不超过 20。
+    """
     if len(value) <= 4:
         return "*" * len(value)
     if len(value) <= 8:
@@ -24,6 +30,7 @@ from danmaku_inspector.service.orchestrator import InspectionOrchestrator
 from danmaku_inspector.service.exporter import ExportService
 from danmaku_inspector.runtime.config_manager import ConfigManager
 from danmaku_inspector.runtime.credential_manager import CredentialManager
+from danmaku_inspector.ui.concurrency import PoolTask
 
 logger = logging.getLogger(__name__)
 
@@ -48,7 +55,7 @@ class ResultModel(QAbstractListModel):
         """初始化 ResultModel。
 
         Args:
-            parent: 父对象。
+            parent (QObject | None): 父对象。
         """
         super().__init__(parent)
         self._data: list[dict[str, Any]] = []
@@ -57,10 +64,10 @@ class ResultModel(QAbstractListModel):
         """返回行数。
 
         Args:
-            parent: 父索引。
+            parent (QModelIndex): 父索引，列表模型忽略。
 
         Returns:
-            数据行数。
+            int: 数据行数。
         """
         return len(self._data)
 
@@ -68,11 +75,11 @@ class ResultModel(QAbstractListModel):
         """返回指定索引和角色的数据。
 
         Args:
-            index: 模型索引。
-            role: 数据角色。
+            index (QModelIndex): 模型索引。
+            role (int): 数据角色。
 
         Returns:
-            对应角色的数据值，无效索引返回 None。
+            Any: 对应角色的数据值，无效索引返回 None。
         """
         if not index.isValid() or index.row() >= len(self._data):
             return None
@@ -100,7 +107,7 @@ class ResultModel(QAbstractListModel):
         通过角色区分。此方法定义自定义角色的名称，QML 可通过名称访问对应字段。
 
         Returns:
-            {角色ID: 角色名称} 映射。
+            dict[int, bytes]: 角色ID 到角色名称的映射。
         """
         return {
             self.PART_NUM: b"partNum",
@@ -120,7 +127,7 @@ class ResultModel(QAbstractListModel):
         """设置校验结果。
 
         Args:
-            reports: 分P检测报告列表。
+            reports (list[PartReport]): 分P检测报告列表。
         """
         self.beginResetModel()
         self._data = []
@@ -160,10 +167,10 @@ class ResultModel(QAbstractListModel):
         """获取单个分P的详情。
 
         Args:
-            index: 分P索引。
+            index (int): 分P索引。
 
         Returns:
-            分P详情字典，无效索引返回空字典。
+            dict[str, Any]: 分P详情字典，无效索引返回空字典。
         """
         if 0 <= index < len(self._data):
             return self._data[index]
@@ -182,7 +189,7 @@ class AnomalyModel(QAbstractListModel):
         """初始化 AnomalyModel。
 
         Args:
-            parent: 父对象。
+            parent (QObject | None): 父对象。
         """
         super().__init__(parent)
         self._data: list[dict[str, Any]] = []
@@ -191,10 +198,10 @@ class AnomalyModel(QAbstractListModel):
         """返回行数。
 
         Args:
-            parent: 父索引。
+            parent (QModelIndex): 父索引，列表模型忽略。
 
         Returns:
-            数据行数。
+            int: 数据行数。
         """
         return len(self._data)
 
@@ -202,11 +209,11 @@ class AnomalyModel(QAbstractListModel):
         """返回指定索引和角色的数据。
 
         Args:
-            index: 模型索引。
-            role: 数据角色。
+            index (QModelIndex): 模型索引。
+            role (int): 数据角色。
 
         Returns:
-            对应角色的数据值，无效索引返回 None。
+            Any: 对应角色的数据值，无效索引返回 None。
         """
         if not index.isValid() or index.row() >= len(self._data):
             return None
@@ -224,7 +231,7 @@ class AnomalyModel(QAbstractListModel):
         """返回角色名称映射，供 QML 通过名称访问数据。
 
         Returns:
-            {角色ID: 角色名称} 映射。
+            dict[int, bytes]: 角色ID 到角色名称的映射。
         """
         return {
             self.MIDHASH: b"midhash",
@@ -237,7 +244,7 @@ class AnomalyModel(QAbstractListModel):
         """设置异常列表。
 
         Args:
-            anomalies: 异常发送者列表。
+            anomalies (list[SenderAnomaly]): 异常发送者列表。
         """
         self.beginResetModel()
         self._data = [
@@ -262,13 +269,12 @@ class Backend(QObject):
     isRunningChanged = Signal(bool)
     statusChanged = Signal(str)
     errorOccurred = Signal(str)
-    _inspectFinished = Signal(object)  # 用于子线程回调主线程
 
     def __init__(self, parent: QObject | None = None) -> None:
         """初始化 Backend。
 
         Args:
-            parent: 父对象。
+            parent (QObject | None): 父对象。
         """
         super().__init__(parent)
         self._is_running: bool = False
@@ -288,8 +294,6 @@ class Backend(QObject):
 
         # 初始化账号模型
         self._refresh_account_model()
-
-        self._inspectFinished.connect(self._on_inspect_finished)
 
     # region QML 属性
 
@@ -334,7 +338,11 @@ class Backend(QObject):
 
     @Slot(str)
     def save_sessdata(self, sessdata: str) -> None:
-        """保存 SESSDATA 到加密存储。"""
+        """保存 SESSDATA 到加密存储。
+
+        Args:
+            sessdata (str): SESSDATA 值，空值忽略。
+        """
         if not sessdata:
             return
         if self._credentials:
@@ -346,7 +354,16 @@ class Backend(QObject):
 
     @Slot(str, int, int, result=list)
     def getFilteredReports(self, status_filter: str, sort_index: int, sort_order: int) -> list[dict]:
-        """获取筛选和排序后的报告数据。"""
+        """获取筛选和排序后的报告数据。
+
+        Args:
+            status_filter (str): 状态筛选值，"ALL" 表示不过滤。
+            sort_index (int): 排序字段序号，0=分P号, 1=漏发率, 2=错发数, 3=漏发数。
+            sort_order (int): 排序方向，-1 表示降序。
+
+        Returns:
+            list[dict]: 报告行字典列表，无报告时为空列表。
+        """
         if not self._orchestrator or not self._orchestrator.report:
             return []
 
@@ -399,7 +416,13 @@ class Backend(QObject):
 
     @Slot(str, str, str)
     def start_inspect(self, bvid: str, sessdata: str, xml_dir: str) -> None:
-        """开始校验（在子线程中运行）。"""
+        """开始校验。
+
+        Args:
+            bvid (str): 视频 BV 号。
+            sessdata (str): SESSDATA 值。
+            xml_dir (str): 本地 XML 文件目录。
+        """
         if self._is_running:
             return
         self.save_sessdata(sessdata)
@@ -407,21 +430,34 @@ class Backend(QObject):
         self._is_running = True
         self.isRunningChanged.emit(True)
         logger.info(f"开始检测: bvid={bvid}, xml_dir={xml_dir}")
-        thread = threading.Thread(target=self._run_inspect, args=(bvid, sessdata, xml_dir))
-        thread.daemon = True
-        thread.start()
-        logger.info("线程已启动")
+        PoolTask.submit(
+            self._run_inspect,
+            on_result=self._on_inspect_finished,
+            on_error=self._on_inspect_error,
+            bvid=bvid,
+            sessdata=sessdata,
+            xml_dir=xml_dir,
+        )
+        logger.info("抓取任务已提交")
 
     @Slot(int)
     def show_part_detail(self, index: int) -> None:
-        """显示指定分P的详情。"""
+        """显示指定分P的详情。
+
+        Args:
+            index (int): 分P索引。
+        """
         if self._orchestrator and self._orchestrator.report and 0 <= index < len(self._orchestrator.report.reports):
             report = self._orchestrator.report.reports[index]
             self._anomaly_model.set_anomalies(report.anomalies)
 
     @Slot(int)
     def export_part_csv(self, part_index: int) -> None:
-        """导出单个分P的 CSV。"""
+        """导出单个分P的 CSV。
+
+        Args:
+            part_index (int): 分P索引。
+        """
         if self._exporter:
             path = self._exporter.export_part_csv(part_index)
             if path:
@@ -430,7 +466,11 @@ class Backend(QObject):
 
     @Slot(int)
     def export_part_diff(self, part_index: int) -> None:
-        """导出单个分P的差集。"""
+        """导出单个分P的差集。
+
+        Args:
+            part_index (int): 分P索引。
+        """
         if self._exporter:
             path = self._exporter.export_part_diff(part_index)
             if path:
@@ -439,7 +479,11 @@ class Backend(QObject):
 
     @Slot(int)
     def export_part_danmaku_csv(self, part_index: int) -> None:
-        """导出单个分P的全量弹幕 CSV。"""
+        """导出单个分P的全量弹幕 CSV。
+
+        Args:
+            part_index (int): 分P索引。
+        """
         if self._exporter:
             path = self._exporter.export_part_danmaku_csv(part_index)
             if path:
@@ -448,7 +492,11 @@ class Backend(QObject):
 
     @Slot(int)
     def export_part_danmaku_xml(self, part_index: int) -> None:
-        """导出单个分P的全量弹幕 XML。"""
+        """导出单个分P的全量弹幕 XML。
+
+        Args:
+            part_index (int): 分P索引。
+        """
         if self._exporter:
             path = self._exporter.export_part_danmaku_xml(part_index)
             if path:
@@ -465,7 +513,11 @@ class Backend(QObject):
 
     @Slot(str)
     def export_diff(self, output_dir: str) -> None:
-        """批量导出漏发弹幕。"""
+        """批量导出漏发弹幕。
+
+        Args:
+            output_dir (str): 导出目录。
+        """
         if self._exporter and self._orchestrator:
             self._exporter.set_output_dir(output_dir)
             threshold = self._orchestrator._inspection_config.unsent_rate_threshold
@@ -475,7 +527,14 @@ class Backend(QObject):
 
     @Slot(int, result=dict)
     def getAccount(self, index: int) -> dict:
-        """获取账号信息。"""
+        """获取账号信息。
+
+        Args:
+            index (int): 账号索引。
+
+        Returns:
+            dict: 账号信息字典，索引无效时为空字典。
+        """
         if 0 <= index < len(self._credentials):
             acc = self._credentials[index]
             return {
@@ -495,7 +554,11 @@ class Backend(QObject):
 
     @Slot(str)
     def addAccount(self, sessdata: str) -> None:
-        """添加账号。"""
+        """添加账号。
+
+        Args:
+            sessdata (str): SESSDATA 值，空值或重复值忽略。
+        """
         if not sessdata:
             return
         for acc in self._credentials:
@@ -513,7 +576,12 @@ class Backend(QObject):
 
     @Slot(int, str)
     def editAccount(self, index: int, sessdata: str) -> None:
-        """编辑账号。"""
+        """编辑账号。
+
+        Args:
+            index (int): 账号索引。
+            sessdata (str): 新的 SESSDATA 值。
+        """
         if not (0 <= index < len(self._credentials) and sessdata):
             return
         for i, acc in enumerate(self._credentials):
@@ -529,7 +597,11 @@ class Backend(QObject):
 
     @Slot(int)
     def deleteAccount(self, index: int) -> None:
-        """删除账号。"""
+        """删除账号。
+
+        Args:
+            index (int): 账号索引。
+        """
         if not (0 <= index < len(self._credentials)):
             return
         self._credentials.pop(index)
@@ -542,7 +614,11 @@ class Backend(QObject):
 
     @Slot(int)
     def useAccount(self, index: int) -> None:
-        """切换到指定账号。"""
+        """切换到指定账号。
+
+        Args:
+            index (int): 账号索引。
+        """
         if 0 <= index < len(self._credentials):
             self._active_index = index
             self._refresh_account_model()
@@ -551,7 +627,11 @@ class Backend(QObject):
 
     @Slot(int)
     def checkAccount(self, index: int) -> None:
-        """检测账号是否有效。"""
+        """检测账号是否有效。
+
+        Args:
+            index (int): 账号索引。
+        """
         if not (0 <= index < len(self._credentials)):
             return
         acc = self._credentials[index]
@@ -597,56 +677,75 @@ class Backend(QObject):
             })
         self._account_model.set_accounts(accounts) if hasattr(self, '_account_model') else None
 
-    def _run_inspect(self, bvid: str, sessdata: str, xml_dir: str) -> None:
-        """实际的校验逻辑（在子线程中运行）。"""
-        try:
-            self._orchestrator = InspectionOrchestrator(
-                inspection_config=self._app_config.inspection,
-                network_config=self._app_config.network,
-            )
-            report = self._orchestrator.run(
-                bvid=bvid,
-                sessdata=sessdata,
-                xml_dir=xml_dir,
-                on_status=lambda s: self.statusChanged.emit(s),
-            )
+    def _run_inspect(self, bvid: str, sessdata: str, xml_dir: str) -> InspectionReport:
+        """执行校验并构造导出服务。
 
-            # 初始化导出服务
-            self._exporter = ExportService(
-                reports=report.reports,
-                all_expected=self._orchestrator.all_expected,
-                all_online=self._orchestrator.all_online,
-                output_dir=str(Path(xml_dir) / "export"),
-            )
+        Args:
+            bvid (str): 视频 BV 号。
+            sessdata (str): SESSDATA 值。
+            xml_dir (str): 本地 XML 文件目录。
 
-            # 通过信号回传结果
-            self._inspectFinished.emit(report)
+        Returns:
+            InspectionReport: 整体检测报告。
 
-        except RuntimeError as e:
-            if "风控" in str(e):
-                self.statusChanged.emit(f"被B站风控了: {e}")
-            else:
-                self.statusChanged.emit(f"错误: {e}")
-            self.errorOccurred.emit(str(e))
+        Raises:
+            ValueError: 未找到 XML 文件，或没有可校验的分P。
+            BiliNetworkError: 获取视频信息失败。
+        """
+        self._orchestrator = InspectionOrchestrator(
+            inspection_config=self._app_config.inspection,
+            network_config=self._app_config.network,
+        )
+        report = self._orchestrator.run(
+            bvid=bvid,
+            sessdata=sessdata,
+            xml_dir=xml_dir,
+            on_status=lambda s: self.statusChanged.emit(s),
+        )
 
-        except Exception as e:
-            logger.error(f"校验失败: {e}")
-            self.statusChanged.emit(f"错误: {e}")
-            self.errorOccurred.emit(str(e))
+        # 初始化导出服务（只含抓取完整的分P）
+        self._exporter = ExportService(
+            reports=report.reports,
+            all_expected=self._orchestrator.all_expected,
+            all_online=self._orchestrator.all_online,
+            output_dir=str(Path(xml_dir) / "export"),
+        )
+        return report
 
-        finally:
-            self._is_running = False
-            self.isRunningChanged.emit(False)
-
-    @Slot(InspectionReport)
     def _on_inspect_finished(self, report: InspectionReport) -> None:
-        """校验完成回调（主线程）。"""
+        """校验完成回调。
+
+        Args:
+            report (InspectionReport): 整体检测报告。
+        """
         self._result_model.set_results(report.reports)
         for r in report.reports:
             if r.anomalies:
                 self._anomaly_model.set_anomalies(r.anomalies)
                 break
-        self._status = f"完成，共 {report.total_parts} 个分P"
+
+        fail_note = f"，{len(report.failed_parts)} 个分P抓取失败" if report.failed_parts else ""
+        self._status = f"完成，共 {report.total_parts} 个分P{fail_note}"
         self.statusChanged.emit(self._status)
+
+        self._is_running = False
+        self.isRunningChanged.emit(False)
+
+    def _on_inspect_error(self, error: object) -> None:
+        """校验失败回调。
+
+        Args:
+            error (object): 抛出的异常对象。
+        """
+        message = str(error)
+        if "风控" in message:
+            self._status = f"被B站风控了: {message}"
+        else:
+            self._status = f"错误: {message}"
+        self.statusChanged.emit(self._status)
+        self.errorOccurred.emit(message)
+
+        self._is_running = False
+        self.isRunningChanged.emit(False)
 
     # endregion

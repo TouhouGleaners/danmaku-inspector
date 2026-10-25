@@ -25,3 +25,4 @@ class AppInfo:
         DATA = _DATA_DIR
         CONFIG = _DATA_DIR / "config.json"
         ACCOUNTS = _DATA_DIR / "accounts.json"
+        CRAWL_CACHE = _DATA_DIR / "crawl_cache"
